@@ -62,7 +62,36 @@ class ErrorValidacion extends Error {
 // puede emitir a nombre de otro, y no tiene que repetirlos en cada llamada.
 // -----------------------------------------------------------------------------
 
+// CODIGO_ACTIVIDAD_PENDIENTE: relleno temporal para codigoActividadEmisor, obligatorio en el
+// anexo para FE. Se usa SOLO cuando el tenant no tiene codigoActividad propio (hoy en día,
+// ningún tenant lo tiene: se sacó del registro a propósito, ver la nota en
+// routes/panel.js sobre TenantSchema.verificacion). Mientras no exista el servicio de firma
+// digital que confirme/complete este dato real, esto evita bloquear la emisión de comprobantes
+// por un campo que nadie tiene forma de llenar todavía. Cuando esa integración exista, dejará de
+// hacer falta: tenant.codigoActividad ya no será null y este relleno nunca se va a usar.
+
+const CODIGO_ACTIVIDAD_PENDIENTE = '000000';
+
 function completarEmisor(doc, tenant) {
+  return {
+    ...doc,
+    codigoActividadEmisor: doc.codigoActividadEmisor || tenant.codigoActividad || CODIGO_ACTIVIDAD_PENDIENTE,
+    proveedorSistemas: tenant.proveedorSistemas || tenant.identificacion.numero,
+    emisor: {
+      nombre: tenant.nombre,
+      identificacion: {
+        tipo: tenant.identificacion.tipo,
+        numero: tenant.identificacion.numero,
+      },
+      ...(tenant.nombreComercial ? { nombreComercial: tenant.nombreComercial } : {}),
+      ...(tenant.ubicacion?.provincia ? { ubicacion: tenant.ubicacion.toObject?.() ?? tenant.ubicacion } : {}),
+      ...(tenant.telefono?.numTelefono ? { telefono: tenant.telefono.toObject?.() ?? tenant.telefono } : {}),
+      ...(tenant.correos?.length ? { correoElectronico: tenant.correos } : {}),
+    },
+  };
+}
+
+/*function completarEmisor(doc, tenant) {
   return {
     ...doc,
     codigoActividadEmisor: doc.codigoActividadEmisor || tenant.codigoActividad,
@@ -79,7 +108,7 @@ function completarEmisor(doc, tenant) {
       ...(tenant.correos?.length ? { correoElectronico: tenant.correos } : {}),
     },
   };
-}
+}*/
 
 // -----------------------------------------------------------------------------
 // Numeración
