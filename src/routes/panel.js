@@ -20,6 +20,7 @@ const almacen = require('../storage/almacen');
 const cat = require('../../core/catalogos');
 const ubicaciones = require('../../core/ubicaciones');
 const adaptadores = require('../adaptadores');
+const { limitarIntentos } = require('../middleware/limitarIntentos');
 
 const router = express.Router();
 
@@ -42,7 +43,7 @@ router.get('/ubicaciones', (req, res) => {
   });
 });
 
-router.post('/auth/login', async (req, res, next) => {
+router.post('/auth/login', limitarIntentos(10), async (req, res, next) => {
   try {
     const { email, password } = req.body || {};
     if (!email || !password) {
@@ -75,15 +76,22 @@ router.post('/auth/login', async (req, res, next) => {
  * Alta de un cliente nuevo, sin intervención manual.
  *
  * Antes de esto, la única forma de crear un tenant era a mano con scripts/seed.js.
- * Acá se piden exactamente los campos que el emisor necesita para poder facturar
- * de inmediato (ver core/fieldRules.js, sección "emisor"): pedirlos todos ahora
- * evita que el cliente descubra un campo faltante recién cuando intenta emitir
- * su primera factura.
+ * Acá se piden los campos que el emisor necesita para poder facturar de inmediato
+ * (ver core/fieldRules.js, sección "emisor"): pedirlos todos ahora evita que el
+ * cliente descubra un campo faltante recién cuando intenta emitir su primera factura.
+ *
+ * EXCEPCIÓN a propósito: codigoActividad. También es obligatorio para poder emitir
+ * (fieldRules.js lo exige), pero NO se pide acá: queda en null hasta que el futuro
+ * servicio de firma digital lo complete/confirme al validar la existencia real del
+ * cliente (ver TenantSchema.verificacion en db/models.js). Un tenant registrado hoy
+ * no va a poder emitir comprobantes hasta que ese dato se complete de alguna forma
+ * (por ahora, editándolo a mano si hiciera falta probar la emisión antes de que esa
+ * integración exista).
  *
  * Se valida la identificación y el correo ANTES de crear nada, para no dejar un
  * tenant a medias si el usuario falla por correo duplicado.
  */
-router.post('/auth/registro', async (req, res, next) => {
+router.post('/auth/registro', limitarIntentos(5), async (req, res, next) => {
   try {
     const { tenant: datosTenant, usuario: datosUsuario } = req.body || {};
 
@@ -100,7 +108,6 @@ router.post('/auth/registro', async (req, res, next) => {
     if (campoFalta(datosTenant.nombre)) camposFaltantes.push('tenant.nombre');
     if (campoFalta(datosTenant.identificacion?.tipo)) camposFaltantes.push('tenant.identificacion.tipo');
     if (campoFalta(datosTenant.identificacion?.numero)) camposFaltantes.push('tenant.identificacion.numero');
-    if (campoFalta(datosTenant.codigoActividad)) camposFaltantes.push('tenant.codigoActividad');
     if (campoFalta(datosTenant.ubicacion?.provincia)) camposFaltantes.push('tenant.ubicacion.provincia');
     if (campoFalta(datosTenant.ubicacion?.canton)) camposFaltantes.push('tenant.ubicacion.canton');
     if (campoFalta(datosTenant.ubicacion?.distrito)) camposFaltantes.push('tenant.ubicacion.distrito');
@@ -139,7 +146,6 @@ router.post('/auth/registro', async (req, res, next) => {
         tipo: datosTenant.identificacion.tipo,
         numero: datosTenant.identificacion.numero,
       },
-      codigoActividad: datosTenant.codigoActividad,
       ubicacion: {
         provincia: datosTenant.ubicacion.provincia,
         canton: datosTenant.ubicacion.canton,
@@ -202,6 +208,105 @@ router.get('/auth/me', (req, res) => {
       identificacion: req.tenant.identificacion,
     },
   });
+});
+
+/**
+ * GET /panel/perfil
+ * Datos editables del perfil: los del propio usuario y los del tenant que tiene sentido poder
+ * cambiar después del registro. A propósito NO incluye identificación ni codigoActividad: esos
+ * quedan atados a la verificación real de existencia del cliente (ver TenantSchema.verificacion
+ * en db/models.js), no a una edición libre desde acá.
+ */
+router.get('/perfil', (req, res) => {
+  res.json({
+    usuario: {
+      nombre: req.user.nombre,
+      email: req.user.email,
+    },
+    tenant: {
+      nombreComercial: req.tenant.nombreComercial,
+      telefono: req.tenant.telefono,
+      correos: req.tenant.correos,
+      ubicacion: req.tenant.ubicacion,
+    },
+  });
+});
+
+/**
+ * PUT /panel/perfil
+ * Actualiza los datos editables. Los dos bloques (usuario/tenant) son independientes: se puede
+ * mandar uno solo, el otro, o los dos juntos.
+ *
+ * Cambiar la contraseña exige la actual (passwordActual), para confirmar que quien tiene la
+ * sesión abierta es realmente el dueño de la cuenta y no solo alguien que encontró el navegador
+ * abierto.
+ */
+router.put('/perfil', async (req, res, next) => {
+  try {
+    const { usuario: datosUsuario, tenant: datosTenant } = req.body || {};
+
+    if (datosUsuario) {
+      if (datosUsuario.nombre !== undefined) {
+        req.user.nombre = datosUsuario.nombre;
+      }
+
+      if (datosUsuario.email !== undefined) {
+        const email = String(datosUsuario.email).toLowerCase().trim();
+        if (email !== req.user.email) {
+          const existente = await User.findOne({ email });
+          if (existente) return res.status(409).json({ error: 'CORREO_YA_REGISTRADO' });
+          req.user.email = email;
+        }
+      }
+
+      if (datosUsuario.passwordNueva) {
+        if (!datosUsuario.passwordActual) {
+          return res.status(400).json({
+            error: 'FALTA_PASSWORD_ACTUAL',
+            mensaje: 'Debe indicar su contraseña actual para cambiarla.',
+          });
+        }
+        if (!auth.verificarPassword(datosUsuario.passwordActual, req.user.passwordHash)) {
+          return res.status(401).json({ error: 'PASSWORD_INCORRECTA', mensaje: 'La contraseña actual no es correcta.' });
+        }
+        if (String(datosUsuario.passwordNueva).length < 8) {
+          return res.status(400).json({ error: 'PASSWORD_DEBIL', mensaje: 'La nueva contraseña debe tener al menos 8 caracteres.' });
+        }
+        req.user.passwordHash = auth.hashPassword(datosUsuario.passwordNueva);
+      }
+
+      await req.user.save();
+    }
+
+    if (datosTenant) {
+      if (datosTenant.nombreComercial !== undefined) req.tenant.nombreComercial = datosTenant.nombreComercial;
+      if (datosTenant.telefono !== undefined) req.tenant.telefono = datosTenant.telefono;
+      if (Array.isArray(datosTenant.correos) && datosTenant.correos.length) req.tenant.correos = datosTenant.correos;
+
+      if (datosTenant.ubicacion) {
+        const { provincia, canton, distrito, barrio, otrasSenas } = datosTenant.ubicacion;
+        if (provincia !== undefined) req.tenant.ubicacion.provincia = provincia;
+        if (canton !== undefined) req.tenant.ubicacion.canton = canton;
+        if (distrito !== undefined) req.tenant.ubicacion.distrito = distrito;
+        if (barrio !== undefined) req.tenant.ubicacion.barrio = barrio;
+        if (otrasSenas !== undefined) req.tenant.ubicacion.otrasSenas = otrasSenas;
+      }
+
+      await req.tenant.save();
+    }
+
+    res.json({
+      usuario: { nombre: req.user.nombre, email: req.user.email },
+      tenant: {
+        nombreComercial: req.tenant.nombreComercial,
+        telefono: req.tenant.telefono,
+        correos: req.tenant.correos,
+        ubicacion: req.tenant.ubicacion,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // -----------------------------------------------------------------------------

@@ -42,7 +42,11 @@ const TenantSchema = new Schema({
     numero: { type: String, required: true },
   },
   nombreComercial:   String,
-  codigoActividad:   { type: String, required: true },
+  // Antes era obligatorio en el registro. Se deja opcional a propósito: cuando se integre el
+  // futuro servicio de firma digital para validar la existencia real del cliente, es ESE
+  // proceso el que debería completar/confirmar este dato (junto con lo que sea que ese servicio
+  // exija), no un campo de texto libre sin validar que cualquiera llena a mano hoy.
+  codigoActividad:   { type: String, default: null },
   proveedorSistemas: String,
 
   ubicacion: {
@@ -63,6 +67,20 @@ const TenantSchema = new Schema({
   // Se guardan como configuración, no como código: agregar un cliente nuevo
   // no requiere desplegar. Mixed porque la forma del mapeo la define el tenant.
   adaptadores: { type: [Schema.Types.Mixed], default: [] },
+
+  // Preparado para un futuro servicio de firma digital que confirme identidad/existencia real
+  // del cliente. Todo opcional y con "Mixed" a propósito: hoy no se sabe qué datos exactos va a
+  // devolver ese proveedor, y los tenants que ya existen (o que se registren antes de que esa
+  // integración exista) tienen que seguir funcionando exactamente igual, sin migración ni campo
+  // obligatorio que les falte. El día que se integre, el codigo simplemente empieza a llenar
+  // esto para los tenants NUEVOS (o los que se re-verifiquen); los viejos quedan "sin_verificar"
+  // indefinidamente, sin que eso les rompa nada.
+  verificacion: {
+    nivel:       { type: String, enum: ['sin_verificar', 'verificado'], default: 'sin_verificar' },
+    proveedor:   { type: String, default: null },   // ej. "firma-digital-cr", cuando exista
+    datos:       { type: Schema.Types.Mixed, default: null }, // lo que ese proveedor necesite guardar
+    verificadoEn: { type: Date, default: null },
+  },
 
   activo:   { type: Boolean, default: true },
 }, { timestamps: true });
