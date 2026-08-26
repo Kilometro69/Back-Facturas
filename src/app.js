@@ -24,6 +24,7 @@ const almacen = require('./storage/almacen');
 const app = express();
 
 app.set('trust proxy', 1);
+app.disable('x-powered-by'); // oculta "X-Powered-By: Express" (revela el framework sin necesidad)
 app.use(express.json({ limit: '2mb' }));
 
 // -----------------------------------------------------------------------------
@@ -49,11 +50,27 @@ app.use((req, res, next) => {
   next();
 });
 
-// Encabezados de seguridad básicos, sin dependencias extra
+// Encabezados de seguridad básicos, sin dependencias extra.
+//
+// La CSP no puede ser tan estricta como en una API JSON pura: /preview devuelve HTML real, con
+// estilos inline (así arma el diseño el editor) e imágenes externas (el logo del tenant puede
+// vivir en cualquier URL). Se permite exactamente eso y nada de scripts, ya que la vista previa
+// nunca necesita ejecutar JavaScript.
 app.use((req, res, next) => {
   res.set('X-Content-Type-Options', 'nosniff');
   res.set('X-Frame-Options', 'SAMEORIGIN');
   res.set('Referrer-Policy', 'no-referrer');
+  res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  res.set(
+    'Content-Security-Policy',
+    "default-src 'self'; img-src * data:; style-src 'unsafe-inline'; script-src 'none'; " +
+    "frame-ancestors 'self'; base-uri 'none'; form-action 'none'"
+  );
+  res.set('Permissions-Policy', 'geolocation=(), camera=(), microphone=(), payment=()');
+  // El filtro heredado X-XSS-Protection quedo obsoleto y removido de los navegadores modernos;
+  // activarlo en navegadores viejos a veces introducia sus propios bypasses. "0" (desactivado)
+  // es la recomendacion actual de OWASP, no una omision.
+  res.set('X-XSS-Protection', '0');
   next();
 });
 
