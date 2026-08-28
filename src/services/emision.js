@@ -56,7 +56,7 @@ class ErrorValidacion extends Error {
 }
 
 // -----------------------------------------------------------------------------
-// Datos del emisor
+// Datos del emisor ++
 //
 // El cliente nunca manda sus propios datos de emisor: salen del tenant. Así no
 // puede emitir a nombre de otro, y no tiene que repetirlos en cada llamada.
@@ -284,8 +284,33 @@ async function regenerarPdf(documento) {
   return documento;
 }
 
-/** Vista previa sin emitir: no numera, no guarda, no consume secuencia. */
-async function previsualizar({ tenant, entrada, adaptador: nombreAdaptador, plantilla }) {
+/** Vista previa sin emitir: no numera, no guarda, no consume secuencia. ++ */
+
+async function previsualizar({ tenant, entrada, adaptador: nombreAdaptador, plantilla, plantillaId }) {
+  let doc = entrada;
+  if (nombreAdaptador) {
+    const config = (tenant.adaptadores || []).find((a) => a.nombre === nombreAdaptador)
+      || adaptadores.catalogo.obtener(nombreAdaptador);
+    if (config) doc = adaptadores.aplicar(entrada || config.ejemploEntrada, config);
+  }
+
+  const tipoComprobante = doc.tipoComprobante || 'FE';
+  ({ ...doc } = doc);
+  delete doc.tipoComprobante;
+
+  doc = completarEmisor(doc, tenant);
+  doc.fechaEmision = new Date().toISOString();
+
+  doc.clave = '9'.repeat(50);
+  doc.numeroConsecutivo = '9'.repeat(20);
+
+  const plantillaResuelta = plantilla || await resolverPlantilla(tenant, plantillaId);
+
+  const ctx = await contextoRender(doc, plantillaResuelta, tipoComprobante);
+  return renderHtml(doc, plantillaResuelta, ctx);
+}
+
+/*async function previsualizar({ tenant, entrada, adaptador: nombreAdaptador, plantilla }) {
   let doc = entrada;
   if (nombreAdaptador) {
     const config = (tenant.adaptadores || []).find((a) => a.nombre === nombreAdaptador)
@@ -309,7 +334,7 @@ async function previsualizar({ tenant, entrada, adaptador: nombreAdaptador, plan
 
   const ctx = await contextoRender(doc, plantilla, tipoComprobante);
   return renderHtml(doc, plantilla, ctx);
-}
+}*/
 
 /**
  * Emite una nota de crédito contra un comprobante ya emitido.
