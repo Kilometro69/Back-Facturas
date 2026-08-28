@@ -223,7 +223,63 @@ router.get('/auth/me', (req, res) => {
  * No bloquea nada si falla o no encuentra la identificación: el tenant sigue pudiendo facturar
  * igual (ver TenantSchema.verificacion en db/models.js), esto solo actualiza la etiqueta.
  */
+
 router.post('/verificacion', async (req, res, next) => {
+  try {
+    const identificacion = req.tenant.identificacion.numero;
+    const HSM_SIGN_CR_URL = process.env.HSM_SIGN_CR_URL || 'https://hsm-sign-cr.onrender.com';
+
+    let respuesta;
+    try {
+      respuesta = await fetch(`${HSM_SIGN_CR_URL}/api/documentos/certificados/por-identificacion/${identificacion}`);
+    } catch (error) {
+      return res.status(502).json({
+        error: 'SERVICIO_NO_DISPONIBLE',
+        mensaje: 'No se pudo contactar el servicio de Firma Digital. Intente de nuevo más tarde.',
+      });
+    }
+
+    if (respuesta.status === 404) {
+      req.tenant.verificacion = {
+        nivel: 'sin_verificar', proveedor: 'hsm-sign-cr', datos: null, verificadoEn: null,
+      };
+      await req.tenant.save();
+      return res.json({ verificado: false, motivo: 'No existe esa identificación en Firma Digital.' });
+    }
+
+    if (!respuesta.ok) {
+      return res.status(502).json({
+        error: 'SERVICIO_NO_DISPONIBLE',
+        mensaje: 'El servicio de Firma Digital respondió con un error. Intente de nuevo más tarde.',
+      });
+    }
+
+    const cuerpo = await respuesta.json();
+    // por-identificacion puede devolver un objeto solo o un arreglo (como por-nombre); se
+    // toma el primero en cualquiera de los dos casos.
+    const certificado = Array.isArray(cuerpo) ? cuerpo[0] : cuerpo;
+
+    // Alcanza con que exista (200 con datos) -- ver la nota de arriba.
+    const verificado = Boolean(certificado);
+
+    req.tenant.verificacion = {
+      nivel: verificado ? 'verificado' : 'sin_verificar',
+      proveedor: 'hsm-sign-cr',
+      datos: certificado || null,
+      verificadoEn: verificado ? new Date() : null,
+    };
+    await req.tenant.save();
+
+    res.json({
+      verificado,
+      motivo: verificado ? null : 'El servicio no devolvió información asociada a esa identificación.',
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/*router.post('/verificacion', async (req, res, next) => {
   try {
     const identificacion = req.tenant.identificacion.numero;
     const HSM_SIGN_CR_URL = process.env.HSM_SIGN_CR_URL || 'https://hsm-sign-cr.onrender.com';
@@ -275,7 +331,7 @@ router.post('/verificacion', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
-});
+});*/
 
 
 /**
