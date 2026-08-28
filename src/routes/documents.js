@@ -209,13 +209,28 @@ router.post('/:id/nota-credito', async (req, res, next) => {
 });
 
 // -----------------------------------------------------------------------------
-// POST /api/v1/documents/preview — probar sin emitir
+// POST /api/v1/documents/preview — probar sin emitir ++
 //
 // No numera, no guarda y no consume secuencia. Sirve para que el cliente afine
 // su integración sin ensuciar el historial ni quemar consecutivos.
 // -----------------------------------------------------------------------------
 
 router.post('/preview', async (req, res, next) => {
+  try {
+    const { adaptador, plantillaId, ...cuerpo } = req.body || {};
+    const html = await emision.previsualizar({
+      tenant: req.tenant,
+      entrada: cuerpo.datos || cuerpo,
+      adaptador: adaptador || req.query.adapter,
+      plantillaId,
+    });
+    res.type('html').send(html);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/*router.post('/preview', async (req, res, next) => {
   try {
     const { adaptador, ...cuerpo } = req.body || {};
     const html = await emision.previsualizar({
@@ -227,6 +242,6 @@ router.post('/preview', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
-});
+});*/
 
 module.exports = router;
