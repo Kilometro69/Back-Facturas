@@ -143,6 +143,14 @@ router.post('/auth/registro', limitarIntentos(5), async (req, res, next) => {
     if (camposFaltantes.length) {
       return res.status(400).json({ error: 'DATOS_INCOMPLETOS', detalles: camposFaltantes });
     }
+
+    if (!/^\d{1,2}$/.test(String(datosTenant.ubicacion.distrito))) {
+      return res.status(400).json({
+        error: 'DISTRITO_INVALIDO',
+        mensaje: 'El distrito debe ser solo su código (1 o 2 dígitos, ej. "01"), no la provincia y el cantón juntos.',
+      });
+    }
+
     if (String(datosUsuario.password).length < 8) {
       return res.status(400).json({
         error: 'PASSWORD_DEBIL',
@@ -372,6 +380,7 @@ router.get('/perfil', (req, res) => {
     },
     tenant: {
       nombreComercial: req.tenant.nombreComercial,
+      identificacion: req.tenant.identificacion,
       telefono: req.tenant.telefono,
       correos: req.tenant.correos,
       ubicacion: req.tenant.ubicacion,
@@ -431,12 +440,37 @@ router.put('/perfil', async (req, res, next) => {
     }
 
     if (datosTenant) {
+      if (datosTenant.identificacion) {
+        if (req.tenant.verificacion?.nivel === 'verificado') {
+          return res.status(409).json({
+            error: 'CUENTA_YA_VERIFICADA',
+            mensaje: 'No se puede cambiar la identificación de una cuenta ya verificada.',
+          });
+        }
+
+        const { tipo, numero } = datosTenant.identificacion;
+        if (numero && numero !== req.tenant.identificacion.numero) {
+          const existente = await Tenant.findOne({ 'identificacion.numero': numero });
+          if (existente) return res.status(409).json({ error: 'IDENTIFICACION_YA_REGISTRADA' });
+          req.tenant.identificacion.numero = numero;
+        }
+        if (tipo) req.tenant.identificacion.tipo = tipo;
+      }
+
       if (datosTenant.nombreComercial !== undefined) req.tenant.nombreComercial = datosTenant.nombreComercial;
       if (datosTenant.telefono !== undefined) req.tenant.telefono = datosTenant.telefono;
       if (Array.isArray(datosTenant.correos) && datosTenant.correos.length) req.tenant.correos = datosTenant.correos;
 
       if (datosTenant.ubicacion) {
         const { provincia, canton, distrito, barrio, otrasSenas } = datosTenant.ubicacion;
+
+        if (distrito !== undefined && !/^\d{1,2}$/.test(String(distrito))) {
+          return res.status(400).json({
+            error: 'DISTRITO_INVALIDO',
+            mensaje: 'El distrito debe ser solo su código (1 o 2 dígitos, ej. "01"), no la provincia y el cantón juntos.',
+          });
+        }
+
         if (provincia !== undefined) req.tenant.ubicacion.provincia = provincia;
         if (canton !== undefined) req.tenant.ubicacion.canton = canton;
         if (distrito !== undefined) req.tenant.ubicacion.distrito = distrito;
@@ -451,6 +485,7 @@ router.put('/perfil', async (req, res, next) => {
       usuario: { nombre: req.user.nombre, email: req.user.email },
       tenant: {
         nombreComercial: req.tenant.nombreComercial,
+        identificacion: req.tenant.identificacion,
         telefono: req.tenant.telefono,
         correos: req.tenant.correos,
         ubicacion: req.tenant.ubicacion,
