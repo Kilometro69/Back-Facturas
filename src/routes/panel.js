@@ -28,6 +28,30 @@ const router = express.Router();
 // Sesión
 // -----------------------------------------------------------------------------
 
+async function consultarHsmSignCr(identificacion) {
+  const HSM_SIGN_CR_URL = process.env.HSM_SIGN_CR_URL || 'https://hsm-sign-cr.onrender.com';
+
+  let respuesta;
+  try {
+    respuesta = await fetch(`${HSM_SIGN_CR_URL}/api/documentos/certificados/por-identificacion/${identificacion}`);
+  } catch (error) {
+    return { disponible: false, existe: false, datos: null };
+  }
+
+  if (respuesta.status === 404) {
+    return { disponible: true, existe: false, datos: null };
+  }
+  if (!respuesta.ok) {
+    return { disponible: false, existe: false, datos: null };
+  }
+
+  const cuerpo = await respuesta.json();
+  // por-identificacion puede devolver un objeto solo o un arreglo (como por-nombre); se toma
+  // el primero en cualquiera de los dos casos.
+  const certificado = Array.isArray(cuerpo) ? cuerpo[0] : cuerpo;
+  return { disponible: true, existe: Boolean(certificado), datos: certificado || null };
+}
+
 /**
  * Pública a propósito: el formulario de registro necesita las provincias (y los
  * cantones de la elegida) antes de que exista ninguna cuenta con la que
@@ -139,6 +163,21 @@ router.post('/auth/registro', limitarIntentos(5), async (req, res, next) => {
       return res.status(409).json({ error: 'CORREO_YA_REGISTRADO' });
     }
 
+    const verificacionHsm = await consultarHsmSignCr(datosTenant.identificacion.numero);
+
+    if (!verificacionHsm.disponible) {
+      return res.status(502).json({
+        error: 'SERVICIO_NO_DISPONIBLE',
+        mensaje: 'No se pudo verificar la identificación contra Firma Digital. Intente registrarse de nuevo en unos minutos.',
+      });
+    }
+    if (!verificacionHsm.existe) {
+      return res.status(422).json({
+        error: 'IDENTIFICACION_NO_VERIFICADA',
+        mensaje: 'No existe esa identificación en Firma Digital. Regístrese primero en ese servicio, o revise el número ingresado.',
+      });
+    }
+
     const tenant = await Tenant.create({
       nombre: datosTenant.nombre,
       nombreComercial: datosTenant.nombreComercial,
@@ -155,6 +194,13 @@ router.post('/auth/registro', limitarIntentos(5), async (req, res, next) => {
       },
       telefono: datosTenant.telefono,
       correos: datosTenant.correos,
+      verificacion: {
+        nivel: 'verificado',
+        proveedor: 'hsm-sign-cr',
+        datos: verificacionHsm.datos,
+        verificadoEn: new Date(),
+        exigidaEnRegistro: true,
+      },
     });
 
     // Primera llave de API, para que pueda empezar a integrar de inmediato. Se muestra
@@ -226,53 +272,30 @@ router.get('/auth/me', (req, res) => {
 
 router.post('/verificacion', async (req, res, next) => {
   try {
-    const identificacion = req.tenant.identificacion.numero;
-    const HSM_SIGN_CR_URL = process.env.HSM_SIGN_CR_URL || 'https://hsm-sign-cr.onrender.com';
+    const resultado = await consultarHsmSignCr(req.tenant.identificacion.numero);
 
-    let respuesta;
-    try {
-      respuesta = await fetch(`${HSM_SIGN_CR_URL}/api/documentos/certificados/por-identificacion/${identificacion}`);
-    } catch (error) {
+    if (!resultado.disponible) {
       return res.status(502).json({
         error: 'SERVICIO_NO_DISPONIBLE',
         mensaje: 'No se pudo contactar el servicio de Firma Digital. Intente de nuevo más tarde.',
       });
     }
 
-    if (respuesta.status === 404) {
-      req.tenant.verificacion = {
-        nivel: 'sin_verificar', proveedor: 'hsm-sign-cr', datos: null, verificadoEn: null,
-      };
-      await req.tenant.save();
-      return res.json({ verificado: false, motivo: 'No existe esa identificación en Firma Digital.' });
-    }
-
-    if (!respuesta.ok) {
-      return res.status(502).json({
-        error: 'SERVICIO_NO_DISPONIBLE',
-        mensaje: 'El servicio de Firma Digital respondió con un error. Intente de nuevo más tarde.',
-      });
-    }
-
-    const cuerpo = await respuesta.json();
-    // por-identificacion puede devolver un objeto solo o un arreglo (como por-nombre); se
-    // toma el primero en cualquiera de los dos casos.
-    const certificado = Array.isArray(cuerpo) ? cuerpo[0] : cuerpo;
-
-    // Alcanza con que exista (200 con datos) -- ver la nota de arriba.
-    const verificado = Boolean(certificado);
-
+    // Alcanza con que exista -- ver la nota de arriba.
     req.tenant.verificacion = {
-      nivel: verificado ? 'verificado' : 'sin_verificar',
+      nivel: resultado.existe ? 'verificado' : 'sin_verificar',
       proveedor: 'hsm-sign-cr',
-      datos: certificado || null,
-      verificadoEn: verificado ? new Date() : null,
+      datos: resultado.datos,
+      verificadoEn: resultado.existe ? new Date() : null,
+      // No se toca "exigidaEnRegistro" acá: esta ruta es la verificación voluntaria posterior,
+      // no la que se exige al nacer -- si ya era false, sigue siendo false.
+      exigidaEnRegistro: req.tenant.verificacion?.exigidaEnRegistro || false,
     };
     await req.tenant.save();
 
     res.json({
-      verificado,
-      motivo: verificado ? null : 'El servicio no devolvió información asociada a esa identificación.',
+      verificado: resultado.existe,
+      motivo: resultado.existe ? null : 'No existe esa identificación en Firma Digital.',
     });
   } catch (err) {
     next(err);

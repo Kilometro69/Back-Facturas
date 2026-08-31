@@ -80,6 +80,12 @@ const TenantSchema = new Schema({
     proveedor:   { type: String, default: null },   // ej. "firma-digital-cr", cuando exista
     datos:       { type: Schema.Types.Mixed, default: null }, // lo que ese proveedor necesite guardar
     verificadoEn: { type: Date, default: null },
+    // true solo para tenants registrados DESPUÉS de que la verificación se volvió obligatoria en
+    // el registro (ver POST /auth/registro). Los tenants viejos simplemente no tienen este campo
+    // en Mongo -- Mongoose les aplica el default (false) al cargarlos, sin ninguna migración.
+    // Sirve para distinguir "se verificó porque se lo exigimos al nacer" de "se verificó después,
+    // por su cuenta, desde Mi Perfil" -- ambos casos terminan con nivel "verificado" igual.
+    exigidaEnRegistro: { type: Boolean, default: false },
   },
 
   activo:   { type: Boolean, default: true },
