@@ -60,10 +60,11 @@ async function consultarHsmSignCr(identificacion) {
  * campo se pide como código numérico simple en el formulario.
  */
 router.get('/ubicaciones', (req, res) => {
-  const { provincia } = req.query;
+  const { provincia, canton } = req.query;
   res.json({
     provincias: ubicaciones.opcionesProvincias(),
     cantones: provincia ? ubicaciones.opcionesCantones(provincia) : [],
+    distritos: (provincia && canton) ? ubicaciones.opcionesDistritos(provincia, canton) : [],
   });
 });
 
