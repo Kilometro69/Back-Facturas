@@ -463,6 +463,14 @@ router.put('/perfil', async (req, res, next) => {
 
       if (datosTenant.ubicacion) {
         const { provincia, canton, distrito, barrio, otrasSenas } = datosTenant.ubicacion;
+
+        if (distrito !== undefined && !/^\d{1,2}$/.test(String(distrito))) {
+          return res.status(400).json({
+            error: 'DISTRITO_INVALIDO',
+            mensaje: 'El distrito debe ser solo su código (1 o 2 dígitos, ej. "01"), no la provincia y el cantón juntos.',
+          });
+        }
+
         if (provincia !== undefined) req.tenant.ubicacion.provincia = provincia;
         if (canton !== undefined) req.tenant.ubicacion.canton = canton;
         if (distrito !== undefined) req.tenant.ubicacion.distrito = distrito;
